@@ -13,12 +13,12 @@ start_timer() {
         current_time=$(date +%s)
         elapsed=$((current_time - start_time))
         hours=$((elapsed / 3600))
-        minutes=$((elapsed % 3600 / 60))
+        minutes=$(((elapsed % 3600) / 60))
         seconds=$((elapsed % 60))
         
         # Move cursor to timer position and display time
         tput cup $timer_row $timer_col 2>/dev/null
-        printf "%02d:%02d" $minutes $seconds
+        printf "%02d:%02d:%02d" $hours $minutes $seconds
         
         # Check if we should exit (parent process finished)
         if ! kill -0 $BASHPID 2>/dev/null; then
@@ -52,7 +52,7 @@ top=$(( (rows - nlines) / 2 ))
 
 # Calculate timer position at the last line of terminal
 timer_row=$((rows - 1))  # Last line (0-indexed)
-timer_col=$(( (cols - 5) / 2 ))  # Center the timer (5 chars for MM:SS)
+timer_col=$(( (cols - 8) / 2 ))  # Center the timer (8 chars for HH:MM:SS)
 
 # Print top padding
 while [ $top -gt 0 ]; do echo; top=$((top-1)); done
