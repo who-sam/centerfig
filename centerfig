@@ -12,7 +12,8 @@ start_timer() {
     while true; do
         current_time=$(date +%s)
         elapsed=$((current_time - start_time))
-        minutes=$((elapsed / 60))
+        hours=$((elapsed / 3600))
+        minutes=$((elapsed % 3600 / 60))
         seconds=$((elapsed % 60))
         
         # Move cursor to timer position and display time
