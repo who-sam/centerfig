@@ -1,0 +1,84 @@
+#!/bin/bash
+
+# Function to show cursor on exit
+restore_cursor() {
+    tput cnorm
+}
+
+# Function to display timer in background
+start_timer() {
+    start_time=$(date +%s)
+    
+    while true; do
+        current_time=$(date +%s)
+        elapsed=$((current_time - start_time))
+        minutes=$((elapsed / 60))
+        seconds=$((elapsed % 60))
+        
+        # Move cursor to timer position and display time
+        tput cup $timer_row $timer_col 2>/dev/null
+        printf "%02d:%02d" $minutes $seconds
+        
+        # Check if we should exit (parent process finished)
+        if ! kill -0 $BASHPID 2>/dev/null; then
+            break
+        fi
+        
+        sleep 1
+    done
+}
+
+# Check if any argument is provided
+if [ $# -eq 0 ]; then
+    echo "Usage: centerfig [text to display]"
+    echo "Example: centerfig Hello World"
+    exit 1
+fi
+
+clear
+
+# Trap signals to ensure cursor is restored
+trap restore_cursor EXIT INT TERM
+
+# Hide cursor
+tput civis
+
+# Use all arguments passed to the script
+text="$(figlet "$@")"
+rows=$(tput lines); cols=$(tput cols)
+nlines=$(printf "%s\n" "$text" | wc -l)
+top=$(( (rows - nlines) / 2 ))
+
+# Calculate timer position at the last line of terminal
+timer_row=$((rows - 1))  # Last line (0-indexed)
+timer_col=$(( (cols - 5) / 2 ))  # Center the timer (5 chars for MM:SS)
+
+# Print top padding
+while [ $top -gt 0 ]; do echo; top=$((top-1)); done
+
+# Print centered lines
+while IFS= read -r line; do
+  pad=$(( (cols - ${#line}) / 2 ))
+  if [ $pad -gt 0 ]; then
+    printf "%*s%s\n" $pad "" "$line"
+  else
+    printf "%s\n" "$line"
+  fi
+done <<< "$text"
+
+# Start timer in background
+start_timer &
+timer_pid=$!
+
+# Wait for keypress
+read -n1 -s -r
+
+# Kill the timer process
+kill $timer_pid 2>/dev/null
+
+# Clear timer line
+tput cup $timer_row 0 2>/dev/null
+tput el  # Clear the line
+echo  # Move to next line
+
+# Cursor will be restored by the trap
