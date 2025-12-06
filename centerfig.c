@@ -6,18 +6,39 @@
 #include <time.h>
 #include <sys/ioctl.h>
 #include <termios.h>
+#include <getopt.h>
 
 #define MAX_LINES 100
 #define MAX_LINE_LENGTH 1000
+
+// Timer modes
+typedef enum {
+    MODE_TIMER,      // Count down from set time
+    MODE_STOPWATCH,  // Count up from zero
+    MODE_NONE        // No timer display
+} TimerMode;
 
 // Global variables
 static struct termios old_term;
 static char figlet_output[MAX_LINES][MAX_LINE_LENGTH];
 static int figlet_lines = 0;
 static time_t start_time;
+static time_t initial_seconds = 0;
+static TimerMode timer_mode = MODE_STOPWATCH;
 static volatile sig_atomic_t running = 1;
 static volatile sig_atomic_t need_redraw = 0;
 static char *input_text = NULL;
+static int use_color = 0;
+static char *font = NULL;
+
+// Color codes
+#define COLOR_RESET   "\033[0m"
+#define COLOR_RED     "\033[31m"
+#define COLOR_GREEN   "\033[32m"
+#define COLOR_YELLOW  "\033[33m"
+#define COLOR_BLUE    "\033[34m"
+#define COLOR_MAGENTA "\033[35m"
+#define COLOR_CYAN    "\033[36m"
 
 // Function prototypes
 void cleanup(void);
@@ -28,6 +49,8 @@ void get_terminal_size(int *rows, int *cols);
 void generate_figlet(const char *text);
 void draw_display(void);
 void draw_timer(void);
+void print_usage(const char *program_name);
+int parse_time(const char *time_str);
 
 // Cleanup function
 void cleanup(void) {
@@ -35,6 +58,7 @@ void cleanup(void) {
     printf("\033[?25h"); // Show cursor
     printf("\033[2J");   // Clear screen
     printf("\033[H");    // Move cursor to home
+    printf(COLOR_RESET); // Reset colors
     fflush(stdout);
 }
 
@@ -82,9 +106,14 @@ void get_terminal_size(int *rows, int *cols) {
 // Generate figlet output
 void generate_figlet(const char *text) {
     FILE *fp;
-    char cmd[1024];
+    char cmd[2048];
     
-    snprintf(cmd, sizeof(cmd), "figlet %s", text);
+    if (font != NULL) {
+        snprintf(cmd, sizeof(cmd), "figlet -f %s %s", font, text);
+    } else {
+        snprintf(cmd, sizeof(cmd), "figlet %s", text);
+    }
+    
     fp = popen(cmd, "r");
     
     if (fp == NULL) {
@@ -119,10 +148,18 @@ void draw_display(void) {
     
     // Calculate vertical centering
     int top_padding = (rows - figlet_lines) / 2;
+    if (timer_mode != MODE_NONE) {
+        top_padding = (rows - figlet_lines - 2) / 2; // Leave space for timer
+    }
     if (top_padding < 0) top_padding = 0;
     
     // Move to starting position
     printf("\033[%d;1H", top_padding + 1);
+    
+    // Apply color if enabled
+    if (use_color) {
+        printf(COLOR_CYAN);
+    }
     
     // Draw each line centered
     for (int i = 0; i < figlet_lines; i++) {
@@ -133,16 +170,29 @@ void draw_display(void) {
         printf("\033[%dC%s\n", left_padding, figlet_output[i]);
     }
     
+    if (use_color) {
+        printf(COLOR_RESET);
+    }
+    
     fflush(stdout);
 }
 
 // Draw timer at bottom
 void draw_timer(void) {
+    if (timer_mode == MODE_NONE) return;
+    
     int rows, cols;
     get_terminal_size(&rows, &cols);
     
     time_t current_time = time(NULL);
-    time_t elapsed = current_time - start_time;
+    time_t elapsed;
+    
+    if (timer_mode == MODE_STOPWATCH) {
+        elapsed = current_time - start_time;
+    } else { // MODE_TIMER
+        elapsed = initial_seconds - (current_time - start_time);
+        if (elapsed < 0) elapsed = 0;
+    }
     
     int hours = elapsed / 3600;
     int minutes = (elapsed % 3600) / 60;
@@ -155,21 +205,130 @@ void draw_timer(void) {
     printf("\033[%d;1H", rows);  // Move to last line
     printf("\033[2K");            // Clear line
     printf("\033[%dC", timer_col); // Move to center
+    
+    // Color timer based on mode and time
+    if (use_color) {
+        if (timer_mode == MODE_TIMER && elapsed <= 60) {
+            printf(COLOR_RED); // Red when less than 1 minute in timer mode
+        } else if (timer_mode == MODE_TIMER && elapsed <= 300) {
+            printf(COLOR_YELLOW); // Yellow when less than 5 minutes
+        } else {
+            printf(COLOR_GREEN);
+        }
+    }
+    
     printf("%02d:%02d:%02d", hours, minutes, seconds);
     
+    if (use_color) {
+        printf(COLOR_RESET);
+    }
+    
     fflush(stdout);
+    
+    // Exit if timer reaches zero
+    if (timer_mode == MODE_TIMER && elapsed <= 0) {
+        running = 0;
+    }
+}
+
+// Parse time string (supports formats: 90, 1:30, 1:30:00)
+int parse_time(const char *time_str) {
+    int hours = 0, minutes = 0, seconds = 0;
+    int count = sscanf(time_str, "%d:%d:%d", &hours, &minutes, &seconds);
+    
+    if (count == 1) {
+        // Just seconds or minutes (assume minutes if > 60)
+        if (hours > 60) {
+            minutes = hours;
+            hours = 0;
+        } else {
+            seconds = hours;
+            hours = 0;
+        }
+    } else if (count == 2) {
+        // MM:SS format
+        seconds = minutes;
+        minutes = hours;
+        hours = 0;
+    }
+    
+    return hours * 3600 + minutes * 60 + seconds;
+}
+
+// Print usage information
+void print_usage(const char *program_name) {
+    printf("Usage: %s [OPTIONS] [text to display]\n\n", program_name);
+    printf("Options:\n");
+    printf("  -t, --timer TIME      Start countdown timer from TIME\n");
+    printf("                        Formats: seconds (90), MM:SS (1:30), HH:MM:SS (0:1:30)\n");
+    printf("  -s, --stopwatch       Count up from zero (default)\n");
+    printf("  -n, --no-timer        Display text without timer\n");
+    printf("  -c, --color           Use colored output\n");
+    printf("  -f, --font FONT       Use specific figlet font\n");
+    printf("  -h, --help            Display this help and exit\n\n");
+    printf("Examples:\n");
+    printf("  %s Break Time                    # Stopwatch mode\n", program_name);
+    printf("  %s -t 300 Take a Break           # 5 minute timer\n", program_name);
+    printf("  %s -t 25:00 Pomodoro             # 25 minute timer\n", program_name);
+    printf("  %s -n \"Meeting at 3PM\"           # No timer\n", program_name);
+    printf("  %s -c -f slant \"Be Awesome\"      # Colored with slant font\n", program_name);
 }
 
 int main(int argc, char *argv[]) {
-    if (argc < 2) {
-        fprintf(stderr, "Usage: %s [text to display]\n", argv[0]);
-        fprintf(stderr, "Example: %s Hello World\n", argv[0]);
+    int opt;
+    
+    static struct option long_options[] = {
+        {"timer",      required_argument, 0, 't'},
+        {"stopwatch",  no_argument,       0, 's'},
+        {"no-timer",   no_argument,       0, 'n'},
+        {"color",      no_argument,       0, 'c'},
+        {"font",       required_argument, 0, 'f'},
+        {"help",       no_argument,       0, 'h'},
+        {0, 0, 0, 0}
+    };
+    
+    // Parse options
+    while ((opt = getopt_long(argc, argv, "t:sncf:h", long_options, NULL)) != -1) {
+        switch (opt) {
+            case 't':
+                timer_mode = MODE_TIMER;
+                initial_seconds = parse_time(optarg);
+                if (initial_seconds <= 0) {
+                    fprintf(stderr, "Error: Invalid time format\n");
+                    return 1;
+                }
+                break;
+            case 's':
+                timer_mode = MODE_STOPWATCH;
+                break;
+            case 'n':
+                timer_mode = MODE_NONE;
+                break;
+            case 'c':
+                use_color = 1;
+                break;
+            case 'f':
+                font = strdup(optarg);
+                break;
+            case 'h':
+                print_usage(argv[0]);
+                return 0;
+            default:
+                print_usage(argv[0]);
+                return 1;
+        }
+    }
+    
+    // Get remaining arguments as text
+    if (optind >= argc) {
+        fprintf(stderr, "Error: No text provided\n\n");
+        print_usage(argv[0]);
         return 1;
     }
     
-    // Combine all arguments into input text
+    // Combine all remaining arguments into input text
     size_t total_len = 0;
-    for (int i = 1; i < argc; i++) {
+    for (int i = optind; i < argc; i++) {
         total_len += strlen(argv[i]) + 1;
     }
     
@@ -180,7 +339,7 @@ int main(int argc, char *argv[]) {
     }
     
     input_text[0] = '\0';
-    for (int i = 1; i < argc; i++) {
+    for (int i = optind; i < argc; i++) {
         strcat(input_text, argv[i]);
         if (i < argc - 1) strcat(input_text, " ");
     }
@@ -199,7 +358,9 @@ int main(int argc, char *argv[]) {
     
     // Initial draw
     draw_display();
-    draw_timer();
+    if (timer_mode != MODE_NONE) {
+        draw_timer();
+    }
     
     // Main loop
     while (running) {
@@ -210,7 +371,9 @@ int main(int argc, char *argv[]) {
         }
         
         // Update timer
-        draw_timer();
+        if (timer_mode != MODE_NONE) {
+            draw_timer();
+        }
         
         // Check for keypress
         char c;
@@ -222,6 +385,7 @@ int main(int argc, char *argv[]) {
     }
     
     free(input_text);
+    if (font != NULL) free(font);
     
     return 0;
 }
