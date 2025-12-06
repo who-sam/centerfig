@@ -89,6 +89,9 @@ char* get_log_path(const char *date_str);
 void parse_date_filter(const char *filter, char *date_out);
 void get_today_date(char *buffer, size_t size);
 void calculate_task_totals(const char *filepath, const char *task_filter);
+void parse_log_file(const char *filepath, void (*callback)(const char*, int, void*), void *data);
+void get_date_range(const char *period, char *start_date, char *end_date);
+void scan_log_files(const char *start_date, const char *end_date, void (*callback)(const char*, int, void*), void *data);
 
 // Initialize default configuration
 void init_default_config(void) {
@@ -317,7 +320,9 @@ void log_session(Session *session) {
     
     fclose(fp);
     
-    printf("\n✓ Session logged to %s\n", log_path);
+    printf("\n✓ Logged: %s - %02d:%02d:%02d (from %s to %s)\n", 
+           session->task_name, hours, minutes, seconds, start_str, end_str);
+    printf("  Saved to: %s\n", log_path);
 }
 
 // Show log for a specific date
@@ -352,6 +357,360 @@ void parse_date_filter(const char *filter, char *date_out) {
     } else {
         strncpy(date_out, filter, 31);
     }
+}
+
+// Structure to hold task statistics
+typedef struct {
+    char task_name[MAX_TASK_NAME];
+    int total_seconds;
+    int session_count;
+} TaskStats;
+
+typedef struct {
+    TaskStats *tasks;
+    int count;
+    int capacity;
+} TaskStatsCollection;
+
+// Initialize task stats collection
+void init_task_stats_collection(TaskStatsCollection *collection) {
+    collection->capacity = 50;
+    collection->count = 0;
+    collection->tasks = malloc(sizeof(TaskStats) * collection->capacity);
+}
+
+// Free task stats collection
+void free_task_stats_collection(TaskStatsCollection *collection) {
+    free(collection->tasks);
+}
+
+// Add or update task in collection
+void add_task_time(TaskStatsCollection *collection, const char *task_name, int duration_seconds) {
+    // Look for existing task
+    for (int i = 0; i < collection->count; i++) {
+        if (strcmp(collection->tasks[i].task_name, task_name) == 0) {
+            collection->tasks[i].total_seconds += duration_seconds;
+            collection->tasks[i].session_count++;
+            return;
+        }
+    }
+    
+    // Add new task
+    if (collection->count >= collection->capacity) {
+        collection->capacity *= 2;
+        collection->tasks = realloc(collection->tasks, sizeof(TaskStats) * collection->capacity);
+    }
+    
+    strncpy(collection->tasks[collection->count].task_name, task_name, MAX_TASK_NAME - 1);
+    collection->tasks[collection->count].total_seconds = duration_seconds;
+    collection->tasks[collection->count].session_count = 1;
+    collection->count++;
+}
+
+// Parse a log file and call callback for each entry
+void parse_log_file(const char *filepath, void (*callback)(const char*, int, void*), void *data) {
+    FILE *fp = fopen(filepath, "r");
+    if (!fp) return;
+    
+    char line[512];
+    int in_table = 0;
+    
+    while (fgets(line, sizeof(line), fp)) {
+        // Skip header lines
+        if (strstr(line, "| Task |") || strstr(line, "|------|")) {
+            in_table = 1;
+            continue;
+        }
+        
+        if (!in_table || line[0] != '|') continue;
+        
+        // Parse: | task | HH:MM:SS | start | end |
+        char task[MAX_TASK_NAME] = {0};
+        char duration_str[32] = {0};
+        int hours, minutes, seconds;
+        
+        // Manual parsing to handle fields correctly
+        char *p = line + 1; // Skip first |
+        int field = 0;
+        char buffer[MAX_TASK_NAME];
+        int buf_idx = 0;
+        
+        while (*p) {
+            if (*p == '|') {
+                buffer[buf_idx] = '\0';
+                
+                // Trim whitespace
+                char *start = buffer;
+                while (*start == ' ') start++;
+                char *end = start + strlen(start) - 1;
+                while (end > start && (*end == ' ' || *end == '\n')) *end-- = '\0';
+                
+                if (field == 0 && strlen(start) > 0) { // Task name
+                    strncpy(task, start, MAX_TASK_NAME - 1);
+                } else if (field == 1 && strlen(start) > 0) { // Duration
+                    strncpy(duration_str, start, 31);
+                    if (sscanf(duration_str, "%d:%d:%d", &hours, &minutes, &seconds) == 3) {
+                        int total_seconds = hours * 3600 + minutes * 60 + seconds;
+                        if (strlen(task) > 0) {
+                            callback(task, total_seconds, data);
+                        }
+                    }
+                    break; // We have what we need
+                }
+                
+                field++;
+                buf_idx = 0;
+            } else {
+                if (buf_idx < MAX_TASK_NAME - 1) {
+                    buffer[buf_idx++] = *p;
+                }
+            }
+            p++;
+        }
+    }
+    
+    fclose(fp);
+}
+
+// Callback for collecting task stats
+void collect_task_stats_callback(const char *task_name, int duration_seconds, void *data) {
+    TaskStatsCollection *collection = (TaskStatsCollection *)data;
+    add_task_time(collection, task_name, duration_seconds);
+}
+
+// Get date range for period (today, week, month)
+void get_date_range(const char *period, char *start_date, char *end_date) {
+    time_t now = time(NULL);
+    struct tm *tm_info = localtime(&now);
+    
+    if (strcmp(period, "today") == 0) {
+        strftime(start_date, 32, config.dateformat, tm_info);
+        strftime(end_date, 32, config.dateformat, tm_info);
+    } else if (strcmp(period, "week") == 0) {
+        // Start of week (Monday)
+        time_t start = now - (tm_info->tm_wday == 0 ? 6 : tm_info->tm_wday - 1) * 86400;
+        struct tm *start_tm = localtime(&start);
+        strftime(start_date, 32, config.dateformat, start_tm);
+        strftime(end_date, 32, config.dateformat, tm_info);
+    } else if (strcmp(period, "month") == 0) {
+        // Start of month
+        tm_info->tm_mday = 1;
+        mktime(tm_info);
+        strftime(start_date, 32, config.dateformat, tm_info);
+        
+        // End of month (today)
+        struct tm *end_tm = localtime(&now);
+        strftime(end_date, 32, config.dateformat, end_tm);
+    } else {
+        // Default to today
+        strftime(start_date, 32, config.dateformat, tm_info);
+        strftime(end_date, 32, config.dateformat, tm_info);
+    }
+}
+
+// Scan log files in date range
+void scan_log_files(const char *start_date, const char *end_date, 
+                    void (*callback)(const char*, int, void*), void *data) {
+    struct tm start_tm = {0}, end_tm = {0};
+    strptime(start_date, config.dateformat, &start_tm);
+    strptime(end_date, config.dateformat, &end_tm);
+    
+    time_t start_time = mktime(&start_tm);
+    time_t end_time = mktime(&end_tm);
+    
+    // Iterate through each day in range
+    for (time_t t = start_time; t <= end_time; t += 86400) {
+        struct tm *tm_info = localtime(&t);
+        char date_str[32];
+        strftime(date_str, sizeof(date_str), config.dateformat, tm_info);
+        
+        char *log_path = get_log_path(date_str);
+        parse_log_file(log_path, callback, data);
+    }
+}
+
+// Show statistics
+void show_stats(const char *filter) {
+    TaskStatsCollection collection;
+    init_task_stats_collection(&collection);
+    
+    char start_date[32], end_date[32];
+    
+    if (!filter || strcmp(filter, "all") == 0) {
+        // Scan all logs
+        printf("Calculating statistics for all time...\n\n");
+        
+        // This is simplified - would need to recursively scan all log directories
+        get_date_range("month", start_date, end_date);
+        scan_log_files(start_date, end_date, collect_task_stats_callback, &collection);
+    } else if (strcmp(filter, "today") == 0 || strcmp(filter, "week") == 0 || strcmp(filter, "month") == 0) {
+        get_date_range(filter, start_date, end_date);
+        printf("Statistics for %s (%s to %s):\n\n", filter, start_date, end_date);
+        scan_log_files(start_date, end_date, collect_task_stats_callback, &collection);
+    } else {
+        // Specific task name
+        get_date_range("month", start_date, end_date);
+        scan_log_files(start_date, end_date, collect_task_stats_callback, &collection);
+        
+        // Filter for specific task
+        printf("Statistics for task '%s':\n\n", filter);
+        for (int i = 0; i < collection.count; i++) {
+            if (strstr(collection.tasks[i].task_name, filter) != NULL) {
+                int hours = collection.tasks[i].total_seconds / 3600;
+                int minutes = (collection.tasks[i].total_seconds % 3600) / 60;
+                int seconds = collection.tasks[i].total_seconds % 60;
+                
+                printf("  Total Time: %02d:%02d:%02d\n", hours, minutes, seconds);
+                printf("  Sessions: %d\n", collection.tasks[i].session_count);
+                printf("  Avg Session: %02d:%02d:%02d\n", 
+                       (collection.tasks[i].total_seconds / collection.tasks[i].session_count) / 3600,
+                       ((collection.tasks[i].total_seconds / collection.tasks[i].session_count) % 3600) / 60,
+                       (collection.tasks[i].total_seconds / collection.tasks[i].session_count) % 60);
+            }
+        }
+        free_task_stats_collection(&collection);
+        return;
+    }
+    
+    if (collection.count == 0) {
+        printf("No data found.\n");
+        free_task_stats_collection(&collection);
+        return;
+    }
+    
+    // Display statistics table
+    printf("┌────────────────────────────────┬────────────┬──────────┬────────────┐\n");
+    printf("│ Task                           │ Total Time │ Sessions │ Avg/Session│\n");
+    printf("├────────────────────────────────┼────────────┼──────────┼────────────┤\n");
+    
+    int grand_total = 0;
+    int grand_sessions = 0;
+    
+    for (int i = 0; i < collection.count; i++) {
+        int hours = collection.tasks[i].total_seconds / 3600;
+        int minutes = (collection.tasks[i].total_seconds % 3600) / 60;
+        int seconds = collection.tasks[i].total_seconds % 60;
+        
+        int avg_seconds = collection.tasks[i].total_seconds / collection.tasks[i].session_count;
+        int avg_hours = avg_seconds / 3600;
+        int avg_minutes = (avg_seconds % 3600) / 60;
+        int avg_secs = avg_seconds % 60;
+        
+        // Truncate task name if too long
+        char task_display[32];
+        strncpy(task_display, collection.tasks[i].task_name, 30);
+        task_display[30] = '\0';
+        if (strlen(collection.tasks[i].task_name) > 30) {
+            task_display[29] = '.';
+            task_display[28] = '.';
+        }
+        
+        printf("│ %-30s │ %02d:%02d:%02d   │ %8d │ %02d:%02d:%02d   │\n",
+               task_display, hours, minutes, seconds,
+               collection.tasks[i].session_count,
+               avg_hours, avg_minutes, avg_secs);
+        
+        grand_total += collection.tasks[i].total_seconds;
+        grand_sessions += collection.tasks[i].session_count;
+    }
+    
+    printf("├────────────────────────────────┼────────────┼──────────┼────────────┤\n");
+    
+    int total_hours = grand_total / 3600;
+    int total_minutes = (grand_total % 3600) / 60;
+    int total_seconds = grand_total % 60;
+    
+    printf("│ %-30s │ %02d:%02d:%02d   │ %8d │            │\n",
+           "TOTAL", total_hours, total_minutes, total_seconds, grand_sessions);
+    printf("└────────────────────────────────┴────────────┴──────────┴────────────┘\n");
+    
+    free_task_stats_collection(&collection);
+}
+
+// Show report
+void show_report(const char *period) {
+    char start_date[32], end_date[32];
+    get_date_range(period, start_date, end_date);
+    
+    printf("\n");
+    printf("═══════════════════════════════════════════════════════════════\n");
+    printf("  TIME TRACKING REPORT - %s\n", period);
+    printf("  Period: %s to %s\n", start_date, end_date);
+    printf("═══════════════════════════════════════════════════════════════\n\n");
+    
+    TaskStatsCollection collection;
+    init_task_stats_collection(&collection);
+    scan_log_files(start_date, end_date, collect_task_stats_callback, &collection);
+    
+    if (collection.count == 0) {
+        printf("No data found for this period.\n");
+        free_task_stats_collection(&collection);
+        return;
+    }
+    
+    // Calculate totals
+    int grand_total = 0;
+    int max_sessions = 0;
+    TaskStats *most_time_task = NULL;
+    
+    for (int i = 0; i < collection.count; i++) {
+        grand_total += collection.tasks[i].total_seconds;
+        if (collection.tasks[i].session_count > max_sessions) {
+            max_sessions = collection.tasks[i].session_count;
+        }
+        if (!most_time_task || collection.tasks[i].total_seconds > most_time_task->total_seconds) {
+            most_time_task = &collection.tasks[i];
+        }
+    }
+    
+    // Summary
+    printf("📊 SUMMARY\n");
+    printf("─────────────────────────────────────────────────────────────\n");
+    printf("  Total Time Tracked: %02d:%02d:%02d\n", 
+           grand_total / 3600, (grand_total % 3600) / 60, grand_total % 60);
+    printf("  Total Tasks: %d\n", collection.count);
+    printf("  Total Sessions: ");
+    int total_sessions = 0;
+    for (int i = 0; i < collection.count; i++) {
+        total_sessions += collection.tasks[i].session_count;
+    }
+    printf("%d\n", total_sessions);
+    
+    if (most_time_task) {
+        printf("  Most Time Spent: %s (%02d:%02d:%02d)\n",
+               most_time_task->task_name,
+               most_time_task->total_seconds / 3600,
+               (most_time_task->total_seconds % 3600) / 60,
+               most_time_task->total_seconds % 60);
+    }
+    printf("\n");
+    
+    // Task breakdown
+    printf("📋 TASK BREAKDOWN\n");
+    printf("─────────────────────────────────────────────────────────────\n");
+    
+    for (int i = 0; i < collection.count; i++) {
+        int hours = collection.tasks[i].total_seconds / 3600;
+        int minutes = (collection.tasks[i].total_seconds % 3600) / 60;
+        
+        // Calculate percentage
+        float percentage = (float)collection.tasks[i].total_seconds / grand_total * 100;
+        
+        printf("\n  %s\n", collection.tasks[i].task_name);
+        printf("    Time: %02d:%02d:%02d (%.1f%%)\n", 
+               hours, minutes, collection.tasks[i].total_seconds % 60, percentage);
+        printf("    Sessions: %d\n", collection.tasks[i].session_count);
+        
+        // Visual bar
+        int bar_width = (int)(percentage / 2); // Max 50 chars
+        printf("    ");
+        for (int j = 0; j < bar_width; j++) printf("█");
+        printf("\n");
+    }
+    
+    printf("\n═══════════════════════════════════════════════════════════════\n\n");
+    
+    free_task_stats_collection(&collection);
 }
 
 // Cleanup function
@@ -612,6 +971,20 @@ int main(int argc, char *argv[]) {
     if (strcmp(command, "log") == 0) {
         char *filter = argc > 2 ? argv[2] : "today";
         show_log(filter);
+        return 0;
+    }
+    
+    // Handle stats command
+    if (strcmp(command, "stats") == 0) {
+        char *filter = argc > 2 ? argv[2] : "month";
+        show_stats(filter);
+        return 0;
+    }
+    
+    // Handle report command
+    if (strcmp(command, "report") == 0) {
+        char *period = argc > 2 ? argv[2] : "today";
+        show_report(period);
         return 0;
     }
     
