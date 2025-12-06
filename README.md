@@ -9,34 +9,34 @@
 
 ---
 
-## ✨ Features
+## Features
 
-### 🎨 Visual Display
+### Visual Display
 - **Centered ASCII Art** - Beautiful figlet-based text centered in your terminal
 - **Custom Fonts** - Support for any figlet font
 - **Color Support** - Optional colored output with smart color-coding
 - **Responsive** - Automatically adjusts to terminal resize
 
-### ⏱️ Timer Modes
+### Timer Modes
 - **Countdown Timer** - Set specific time limits (e.g., 25:00 for Pomodoro)
 - **Stopwatch** - Count up from zero (default mode)
 - **No Timer** - Display text without any timer
 
-### 📊 Time Tracking
+### Time Tracking
 - **Automatic Logging** - Track all your work sessions automatically
 - **Daily Logs** - Organized by date in markdown format
 - **Task Aggregation** - Combine multiple sessions for the same task
 - **Rich Statistics** - View detailed stats by day, week, or month
 - **Beautiful Reports** - Generate visual reports with progress bars
 
-### 🔧 Configuration
+### Configuration
 - **Customizable Paths** - Configure log directory location
 - **Format Options** - Customize date and time formats
 - **Persistent Settings** - Configuration saved in `~/.config/centerfig/`
 
 ---
 
-## 📦 Installation
+## Installation
 
 ### Prerequisites
 
@@ -69,7 +69,7 @@ centerfig --help
 
 ---
 
-## 🚀 Usage
+## Usage
 
 ### Starting a Timer
 
@@ -180,14 +180,14 @@ centerfig report month
 ║  Period: 2024-12-02 to 2024-12-06                             ║
 ╚═══════════════════════════════════════════════════════════════╝
 
-📊 SUMMARY
+ SUMMARY
 ───────────────────────────────────────────────────────────────
   Total Time Tracked: 9h 0m 0s
   Total Tasks: 3
   Total Sessions: 18
   Most Time Spent: Deep Work (4h 30m 0s)
 
-📋 TASK BREAKDOWN
+ TASK BREAKDOWN
 ───────────────────────────────────────────────────────────────
 
   • Deep Work
@@ -234,7 +234,7 @@ centerfig config reset
 
 ---
 
-## 📁 File Structure
+## File Structure
 
 ```
 ~/.config/centerfig/
@@ -251,7 +251,7 @@ centerfig config reset
 
 ---
 
-## 💡 Use Cases
+## Use Cases
 
 ### Pomodoro Technique
 ```bash
@@ -287,14 +287,14 @@ centerfig start -t 2:00 "Stretch Break"
 
 ---
 
-## 🎯 Keyboard Controls
+## Keyboard Controls
 
 - **Any Key** - Exit the timer and save session (if logging enabled)
 - **Ctrl+C** - Exit immediately (session still saved if logging enabled)
 
 ---
 
-## 🎨 Customization Examples
+## Customization Examples
 
 ### Custom Fonts
 
@@ -311,9 +311,9 @@ centerfig start -f small "Focus"
 ### Color Themes
 
 Timer colors automatically adjust based on time remaining:
-- 🟢 **Green** - Normal operation
-- 🟡 **Yellow** - Less than 5 minutes (countdown mode)
-- 🔴 **Red** - Less than 1 minute (countdown mode)
+- **Green** - Normal operation
+- **Yellow** - Less than 5 minutes (countdown mode)
+- **Red** - Less than 1 minute (countdown mode)
 
 ---
 
@@ -328,7 +328,7 @@ Timer colors automatically adjust based on time remaining:
 
 ---
 
-## 📝 Command Reference
+## Command Reference
 
 ```
 centerfig <command> [options] [arguments]
@@ -352,7 +352,7 @@ Options:
 
 ---
 
-## 🤝 Contributing
+## Contributing
 
 Contributions are welcome! Feel free to:
 - Report bugs
@@ -362,7 +362,7 @@ Contributions are welcome! Feel free to:
 
 ---
 
-## 📄 License
+## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
