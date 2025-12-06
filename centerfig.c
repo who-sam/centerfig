@@ -633,17 +633,30 @@ void show_report(const char *period) {
     get_date_range(period, start_date, end_date);
     
     printf("\n");
-    printf("═══════════════════════════════════════════════════════════════\n");
-    printf("  TIME TRACKING REPORT - %s\n", period);
-    printf("  Period: %s to %s\n", start_date, end_date);
-    printf("═══════════════════════════════════════════════════════════════\n\n");
+    printf("╔═══════════════════════════════════════════════════════════════╗\n");
+    
+    // Format the title line
+    char title[64];
+    snprintf(title, sizeof(title), "TIME TRACKING REPORT - %s", period);
+    printf("║  %-61s║\n", title);
+    
+    // Format the period line
+    char period_line[64];
+    if (strcmp(start_date, end_date) == 0) {
+        snprintf(period_line, sizeof(period_line), "Period: %s", start_date);
+    } else {
+        snprintf(period_line, sizeof(period_line), "Period: %s to %s", start_date, end_date);
+    }
+    printf("║  %-61s║\n", period_line);
+    
+    printf("╚═══════════════════════════════════════════════════════════════╝\n\n");
     
     TaskStatsCollection collection;
     init_task_stats_collection(&collection);
     scan_log_files(start_date, end_date, collect_task_stats_callback, &collection);
     
     if (collection.count == 0) {
-        printf("No data found for this period.\n");
+        printf("No data found for this period.\n\n");
         free_task_stats_collection(&collection);
         return;
     }
@@ -665,50 +678,113 @@ void show_report(const char *period) {
     
     // Summary
     printf("📊 SUMMARY\n");
-    printf("─────────────────────────────────────────────────────────────\n");
-    printf("  Total Time Tracked: %02d:%02d:%02d\n", 
-           grand_total / 3600, (grand_total % 3600) / 60, grand_total % 60);
+    printf("───────────────────────────────────────────────────────────────\n");
+    
+    int total_hours = grand_total / 3600;
+    int total_minutes = (grand_total % 3600) / 60;
+    int total_seconds = grand_total % 60;
+    
+    printf("  Total Time Tracked: ");
+    if (total_hours > 0) {
+        printf("%dh %dm %ds\n", total_hours, total_minutes, total_seconds);
+    } else if (total_minutes > 0) {
+        printf("%dm %ds\n", total_minutes, total_seconds);
+    } else {
+        printf("%ds\n", total_seconds);
+    }
+    
     printf("  Total Tasks: %d\n", collection.count);
-    printf("  Total Sessions: ");
+    
     int total_sessions = 0;
     for (int i = 0; i < collection.count; i++) {
         total_sessions += collection.tasks[i].session_count;
     }
-    printf("%d\n", total_sessions);
+    printf("  Total Sessions: %d\n", total_sessions);
     
     if (most_time_task) {
-        printf("  Most Time Spent: %s (%02d:%02d:%02d)\n",
-               most_time_task->task_name,
-               most_time_task->total_seconds / 3600,
-               (most_time_task->total_seconds % 3600) / 60,
-               most_time_task->total_seconds % 60);
+        int mt_hours = most_time_task->total_seconds / 3600;
+        int mt_minutes = (most_time_task->total_seconds % 3600) / 60;
+        int mt_seconds = most_time_task->total_seconds % 60;
+        
+        printf("  Most Time Spent: %s (", most_time_task->task_name);
+        if (mt_hours > 0) {
+            printf("%dh %dm %ds", mt_hours, mt_minutes, mt_seconds);
+        } else if (mt_minutes > 0) {
+            printf("%dm %ds", mt_minutes, mt_seconds);
+        } else {
+            printf("%ds", mt_seconds);
+        }
+        printf(")\n");
     }
     printf("\n");
     
     // Task breakdown
     printf("📋 TASK BREAKDOWN\n");
-    printf("─────────────────────────────────────────────────────────────\n");
+    printf("───────────────────────────────────────────────────────────────\n");
+    
+    // Sort tasks by time (descending)
+    for (int i = 0; i < collection.count - 1; i++) {
+        for (int j = i + 1; j < collection.count; j++) {
+            if (collection.tasks[j].total_seconds > collection.tasks[i].total_seconds) {
+                TaskStats temp = collection.tasks[i];
+                collection.tasks[i] = collection.tasks[j];
+                collection.tasks[j] = temp;
+            }
+        }
+    }
     
     for (int i = 0; i < collection.count; i++) {
         int hours = collection.tasks[i].total_seconds / 3600;
         int minutes = (collection.tasks[i].total_seconds % 3600) / 60;
+        int seconds = collection.tasks[i].total_seconds % 60;
         
         // Calculate percentage
         float percentage = (float)collection.tasks[i].total_seconds / grand_total * 100;
         
-        printf("\n  %s\n", collection.tasks[i].task_name);
-        printf("    Time: %02d:%02d:%02d (%.1f%%)\n", 
-               hours, minutes, collection.tasks[i].total_seconds % 60, percentage);
-        printf("    Sessions: %d\n", collection.tasks[i].session_count);
+        printf("\n  • %s\n", collection.tasks[i].task_name);
         
-        // Visual bar
-        int bar_width = (int)(percentage / 2); // Max 50 chars
-        printf("    ");
-        for (int j = 0; j < bar_width; j++) printf("█");
+        printf("    Time: ");
+        if (hours > 0) {
+            printf("%dh %dm %ds", hours, minutes, seconds);
+        } else if (minutes > 0) {
+            printf("%dm %ds", minutes, seconds);
+        } else {
+            printf("%ds", seconds);
+        }
+        printf(" (%.1f%%)\n", percentage);
+        
+        printf("    Sessions: %d", collection.tasks[i].session_count);
+        
+        // Calculate average
+        int avg_seconds = collection.tasks[i].total_seconds / collection.tasks[i].session_count;
+        int avg_minutes = avg_seconds / 60;
+        int avg_secs = avg_seconds % 60;
+        printf(" | Avg: ");
+        if (avg_minutes > 0) {
+            printf("%dm %ds", avg_minutes, avg_secs);
+        } else {
+            printf("%ds", avg_secs);
+        }
         printf("\n");
+        
+        // Visual bar (max 50 chars)
+        printf("    [");
+        int bar_width = (int)((percentage / 100.0) * 50);
+        if (bar_width < 1 && percentage > 0) bar_width = 1; // Show at least 1 char if >0%
+        
+        for (int j = 0; j < bar_width; j++) printf("█");
+        for (int j = bar_width; j < 50; j++) printf("░");
+        printf("]\n");
     }
     
-    printf("\n═══════════════════════════════════════════════════════════════\n\n");
+    printf("\n");
+    printf("───────────────────────────────────────────────────────────────\n");
+    printf("Generated on: ");
+    time_t now = time(NULL);
+    struct tm *tm_now = localtime(&now);
+    char timestamp[64];
+    strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%S", tm_now);
+    printf("%s\n\n", timestamp);
     
     free_task_stats_collection(&collection);
 }
